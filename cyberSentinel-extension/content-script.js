@@ -1,5 +1,5 @@
 // --- Configuration ---
-const BACKEND_URL = 'http://localhost:5000/api/';
+const BACKEND_URL = 'http://127.0.0.1:5000/api/';
 // How often to CAPTURE a new batch of frames
 const PRODUCER_INTERVAL_MS = 1000; // Capture a new batch every 1 second
 const MAX_PARTICIPANTS_TO_CAPTURE = 3;
@@ -65,6 +65,7 @@ function produceFrameBatch() {
     const frameDataURL = captureFrameFromVideo(videoElement);
 
     if (frameDataURL) {
+      console.log(frameDataURL);
       batchArray.push({
         participantId: `video_${videoIndex}`,
         imageData: frameDataURL
