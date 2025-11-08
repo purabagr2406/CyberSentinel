@@ -1,35 +1,31 @@
 // --- Configuration ---
 const BACKEND_URL = 'http://localhost:5000/api/';
-const SNAPSHOT_INTERVAL_MS = 5000; // 5 seconds
+// How often to CAPTURE a new batch of frames
+const PRODUCER_INTERVAL_MS = 1000; // Capture a new batch every 1 second
 const MAX_PARTICIPANTS_TO_CAPTURE = 3;
 
 // --- State ---
+const frameQueue = []; // Our "data structure" (the queue)
 let lastCapturedIndex = 0; // Remembers where we left off
 
 // A reusable canvas for capturing snapshots
 const captureCanvas = document.createElement("canvas");
 const captureContext = captureCanvas.getContext("2d");
 
-// --- Main Logic ---
-console.log("CyberSentinel Content Script Loaded!");
-setInterval(captureAndSendFrames, SNAPSHOT_INTERVAL_MS);
+// --- Helper Functions ---
 
 /**
  * Captures a single frame from a video element.
  * Returns the DataURL string or null if the video is blank.
  */
 function captureFrameFromVideo(videoElement) {
-  // Skip videos that are blank (width 0)
   if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
     return null;
   }
   try {
-    // Set canvas to the video's size
     captureCanvas.width = videoElement.videoWidth;
     captureCanvas.height = videoElement.videoHeight;
-    // Draw the video's current frame
     captureContext.drawImage(videoElement, 0, 0, captureCanvas.width, captureCanvas.height);
-    // Get the image data
     return captureCanvas.toDataURL("image/jpeg", 0.8);
   } catch (error) {
     console.error("CyberSentinel: Error capturing frame:", error);
@@ -37,17 +33,16 @@ function captureFrameFromVideo(videoElement) {
   }
 }
 
-/**
- * Finds all participant videos, captures a rotating set of 3,
- * and sends an array of frames to the backend.
- */
-async function captureAndSendFrames() {
-  console.log("Finding video containers...");
+// -----------------------------------------------------------------
+// --- PROCESS 1: The PRODUCER (Adds frames to the queue) ---
+// -----------------------------------------------------------------
 
-  // 1. Find all parent containers with the data-tid
+/**
+ * This is the "Producer". It captures a batch of 3 frames (round-robin)
+ * and adds them to the queue. It does NOT wait for the network.
+ */
+function produceFrameBatch() {
   const parentElements = document.querySelectorAll("[data-tid='calling-stream']");
-  
-  // 2. Go into each parent and find its video, creating a flat list
   const videoElements = [];
   parentElements.forEach((parent) => {
     const video = parent.querySelector('video');
@@ -57,67 +52,100 @@ async function captureAndSendFrames() {
   });
 
   if (videoElements.length === 0) {
-    console.warn("CyberSentinel: No video elements found.");
-    return;
+    return; // No videos, do nothing
   }
 
-  const framesArray = [];
+  const batchArray = [];
   let participantsCaptured = 0;
 
-  // 3. Loop through videos, starting from where we left off
   for (let i = 0; i < videoElements.length; i++) {
-    
-    // Get the next video in the round-robin
     const videoIndex = (lastCapturedIndex + i) % videoElements.length;
     const videoElement = videoElements[videoIndex];
-
     const frameDataURL = captureFrameFromVideo(videoElement);
 
     if (frameDataURL) {
-      framesArray.push({
+      batchArray.push({
         participantId: `video_${videoIndex}`,
         imageData: frameDataURL
       });
       participantsCaptured++;
     }
 
-    // Check if we have our 3 frames
     if (participantsCaptured >= MAX_PARTICIPANTS_TO_CAPTURE) {
-      // Save our new position for next time
       lastCapturedIndex = (videoIndex + 1) % videoElements.length;
-      break; // Exit the loop
+      break;
     }
   }
 
-  // If we looped through everyone and didn't break, reset for the next run
   if (participantsCaptured < MAX_PARTICIPANTS_TO_CAPTURE) {
     lastCapturedIndex = 0;
   }
 
-  // 4. Send whatever frames we managed to capture
-  if (framesArray.length > 0) {
-    console.log(`Sending ${framesArray.length} frames (rotating set) to backend...`);
-    try {
-      const response = await fetch(BACKEND_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          frames: framesArray,
-          timestamp: new Date().toISOString()
-        }),
-      });
+  // If we got frames, add the whole batch to the queue
+  if (batchArray.length > 0) {
+    frameQueue.push(batchArray);
+    console.log(`PRODUCER: Added batch of ${batchArray.length} frames. Queue size: ${frameQueue.length}`);
+  }
+}
 
-      if (!response.ok) {
-        throw new Error(`Backend returned status: ${response.status}`);
+// -----------------------------------------------------------------
+// --- PROCESS 2: The CONSUMER (Sends frames from the queue) ---
+// -----------------------------------------------------------------
+
+/**
+ * This is the "Consumer". It runs in an infinite loop,
+ * checking the queue and sending one batch at a time.
+ * It WAITS for the network response before sending the next.
+ */
+async function runConsumerLoop() {
+  console.log("CONSUMER: Loop started. Waiting for frames...");
+
+  while (true) {
+    // Check if there's anything in the queue
+    if (frameQueue.length > 0) {
+      
+      // 1. Get the OLDEST batch from the queue
+      const batchToSend = frameQueue.shift(); // .shift() pulls from the front
+      
+      console.log(`CONSUMER: Sending batch of ${batchToSend.length}. Queue size: ${frameQueue.length}`);
+
+      // 2. Send it and WAIT for the response
+      try {
+        const response = await fetch(BACKEND_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            frames: batchToSend,
+            timestamp: new Date().toISOString()
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Backend returned status: ${response.status}`);
+        }
+
+        const analysisResult = await response.json();
+        console.log("CONSUMER: Received analysis:", analysisResult);
+
+      } catch (error) {
+        console.error("CONSUMER Error:", error);
+        // Optional: If it fails, add it back to the queue to try again
+        // frameQueue.unshift(batchToSend);
       }
-
-      const analysisResult = await response.json();
-      console.log("Received analysis:", analysisResult);
-
-    } catch (error) {
-      console.error("CyberSentinel Error sending to backend:", error);
+      
+    } else {
+      // 3. If the queue is empty, wait 100ms before checking again
+      //    This prevents the `while(true)` loop from crashing the browser.
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 }
+
+// --- Start Both Processes ---
+console.log("CyberSentinel Content Script Loaded!");
+
+// Start the PRODUCER loop (runs every 1 second, no matter what)
+setInterval(produceFrameBatch, PRODUCER_INTERVAL_MS);
+
+// Start the CONSUMER loop (runs as fast as the network allows)
+runConsumerLoop();
