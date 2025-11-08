@@ -24,7 +24,9 @@
   "host_permissions": [
     "https://teams.microsoft.com/*",
     "https://*.teams.microsoft.com/*", 
-    "https://your-backend-api-url.com/*" 
+		"https://teams.live/v2/*",
+		"https://*.teams.live/v2/*",
+    "http://localhost:5000/api/*" 
   ],
 
   "content_scripts": [
@@ -32,7 +34,8 @@
       "matches": [
         "https://teams.microsoft.com/*",
         "https://*.teams.microsoft.com/*",
-				"https://team.live"
+				"https://teams.live.com/v2/*",
+				"https://*.teams.live.com/v2/*"
       ],
       "js": ["content-script.js"]
     }

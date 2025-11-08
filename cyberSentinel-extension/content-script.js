@@ -12,6 +12,7 @@ let lastCapturedIndex = 0; // Remembers where we left off
 const captureCanvas = document.createElement("canvas");
 const captureContext = captureCanvas.getContext("2d");
 
+console.log("CyberSentinel: Content script initialized.");
 // --- Helper Functions ---
 
 /**

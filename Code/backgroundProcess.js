@@ -7,7 +7,7 @@ const app = express();
 const PORT = 5000;
 
 // Middleware
-app.use(cors());
+// app.use(cors());
 app.use(bodyParser.json({ limit: "50mb" }));
 
 // Main POST endpoint for deepfake detection
