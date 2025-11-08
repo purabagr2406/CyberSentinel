@@ -1,0 +1,14 @@
+# Virtual environment
+venv/
+
+# Dataset
+Code/real_and_fake_face_detection/
+
+# Model weights
+*.h5
+
+# Cache
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
