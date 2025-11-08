@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "CyberSentinel",
+  "version": "1.0",
+
+  "description": "A short, one-sentence description of your extension.",
+
+  "icons": {
+    "16": "./extension-icon.png",
+    "48": "./extension-icon.png",
+    "128": "./extension-icon.png"
+  },
+
+  "action": {
+    "default_popup": "frontend/dist/index.html",
+    "default_title": "CyberSentinel",
+    "default_icon": "extension-icon.png"
+  },
+  
+  "permissions": [
+    "storage" 
+  ],
+
+  "host_permissions": [
+    "https://api.my-project.com/*" 
+  ]
+}
