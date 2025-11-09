@@ -7,10 +7,8 @@ const app = express();
 const PORT = 5000;
 
 // Middleware
-app.use(cors({origin: ["https://teams.microsoft.com/*",
-        "https://*.teams.microsoft.com/*",
-				"https://teams.live.com/v2/*",
-				"https://*.teams.live.com/v2/*"],
+app.use(cors({origin: ["https://teams.microsoft.com",
+    "https://teams.live.com"],
 			credentials: true}));
 app.use(bodyParser.json({ limit: "50mb" }));
 

@@ -34,14 +34,7 @@ function captureFrameFromVideo(videoElement) {
   }
 }
 
-// -----------------------------------------------------------------
-// --- PROCESS 1: The PRODUCER (Adds frames to the queue) ---
-// -----------------------------------------------------------------
 
-/**
- * This is the "Producer". It captures a batch of 3 frames (round-robin)
- * and adds them to the queue. It does NOT wait for the network.
- */
 function produceFrameBatch() {
   const parentElements = document.querySelectorAll("[data-tid='calling-stream']");
   const videoElements = [];
@@ -88,16 +81,7 @@ function produceFrameBatch() {
     console.log(`PRODUCER: Added batch of ${batchArray.length} frames. Queue size: ${frameQueue.length}`);
   }
 }
-
 // -----------------------------------------------------------------
-// --- PROCESS 2: The CONSUMER (Sends frames from the queue) ---
-// -----------------------------------------------------------------
-
-/**
- * This is the "Consumer". It runs in an infinite loop,
- * checking the queue and sending one batch at a time.
- * It WAITS for the network response before sending the next.
- */
 async function runConsumerLoop() {
   console.log("CONSUMER: Loop started. Waiting for frames...");
 
@@ -130,23 +114,16 @@ async function runConsumerLoop() {
 
       } catch (error) {
         console.error("CONSUMER Error:", error);
-        // Optional: If it fails, add it back to the queue to try again
-        // frameQueue.unshift(batchToSend);
       }
       
     } else {
-      // 3. If the queue is empty, wait 100ms before checking again
-      //    This prevents the `while(true)` loop from crashing the browser.
       await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 }
 
-// --- Start Both Processes ---
 console.log("CyberSentinel Content Script Loaded!");
 
-// Start the PRODUCER loop (runs every 1 second, no matter what)
 setInterval(produceFrameBatch, PRODUCER_INTERVAL_MS);
 
-// Start the CONSUMER loop (runs as fast as the network allows)
 runConsumerLoop();
