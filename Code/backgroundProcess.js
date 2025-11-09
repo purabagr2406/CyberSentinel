@@ -7,13 +7,26 @@ const app = express();
 const PORT = 5000;
 
 // Middleware
-app.use(cors({origin: ["https://teams.microsoft.com",
-    "https://teams.live.com"],
-			credentials: true}));
+app.use(
+  cors({
+    origin: [
+      "https://teams.microsoft.com",
+      "https://*.teams.microsoft.com",
+      "https://teams.live.com",
+      "https://*.teams.live.com",
+      "https://outlook.office.com",
+      "https://*.office.com",
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+    credentials: true,
+  })
+);
+
 app.use(bodyParser.json({ limit: "50mb" }));
 
 // Main POST endpoint for deepfake detection
-app.post("/api/", async (req, res) => {
+app.post('/api/', async (req, res) => {
   const frames = req.body.frames;
   const timestamp = req.body.timestamp;
 
@@ -37,7 +50,7 @@ app.post("/api/", async (req, res) => {
     python.stderr.on("data", (data) => {
       errorData += data.toString();
     });
-
+    console.log("Server: Sent frames to Python for analysis.");
     // When process exits
     python.on("close", (code) => {
       if (errorData) {
@@ -61,7 +74,7 @@ app.post("/api/", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+app.get("/", (req, res) => res.send("✅ Deepfake backend is running"));
 app.listen(PORT, () => {
   console.log(`🚀 Deepfake backend running on http://localhost:${PORT}`);
 });

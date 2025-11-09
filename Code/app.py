@@ -1,81 +1,96 @@
 # app.py
+
 import streamlit as st
 import numpy as np
 import cv2
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array
+import time
+from zoom_capture_detect_async import (
+    start_zoom_detection,
+    stop_zoom_detection,
+    get_latest_result
+)
 
-
-# Load the trained model
-
+# ======================================================
+# LOAD MODEL
+# ======================================================
 model = load_model('model/deepfake_detection_model.h5')
 
-# Preprocess the image
+
+TARGET_SIZE = (224, 224)
 def preprocess_image(image):
-    image = cv2.resize(image, (96, 96))
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = image / 255.0
+    # 1. Resize the image (224x224)
+    resized_image = cv2.resize(image, TARGET_SIZE)
+    
+    # *CRITICAL STEP: Convert BGR to RGB* # cv2 loads BGR, but your pre-trained Xception model expects RGB.
+    rgb_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB) # <--- Recommended Fix
+
+    # 2. Normalize the pixel values from [0, 255] to [0.0, 1.0]
+    normalized_image = rgb_image.astype("float32") / 255.0
+    
+    # 3. Add the batch dimension (1, 224, 224, 3)
+    image = np.expand_dims(normalized_image, axis=0)
+    
     return image
 
-# Predict if the image is fake or real
 def predict_image(image):
     processed_image = preprocess_image(image)
     prediction = model.predict(processed_image)
     class_label = np.argmax(prediction, axis=1)[0]
     return "Fake" if class_label == 0 else "Real"
 
-# Streamlit application
-st.markdown("<h1 style='text-align: center; color: grey;'>DEEP FAKE DETECTION IN SOCIAL MEDIA CONTENT</h1>", unsafe_allow_html=True)
-# st.image("coverpage.png")
 
-# Detailed description about deepfake
-st.header("Understanding Deepfakes")
-st.write("""
-Deepfakes are synthetic media where a person in an existing image or video is replaced with someone else's likeness. Leveraging sophisticated AI algorithms, primarily deep learning techniques, deepfakes can create incredibly realistic and convincing fake videos and images. This technology, while having legitimate uses in entertainment and education, poses significant ethical and security challenges. Deepfakes can be used to spread misinformation, create malicious content, and impersonate individuals without consent, raising serious concerns about privacy and trust in digital media. Detection of deepfakes is crucial to mitigate these risks, and AI plays a vital role in identifying such manipulations. By analyzing subtle artifacts and inconsistencies that are often imperceptible to the human eye, AI models can effectively distinguish between real and fake media, ensuring the integrity of visual content.
-""")
+# ======================================================
+# STREAMLIT INTERFACE
+# ======================================================
+st.set_page_config(page_title="Deepfake Detection", layout="wide")
 
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-if uploaded_file is not None:
-    # To read file as bytes:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, 1)
+st.markdown("<h1 style='text-align:center;color:grey;'>🧠 Deepfake Detection Dashboard</h1>", unsafe_allow_html=True)
 
-    # Display the uploaded image
-    st.image(image, channels="BGR")
+mode = st.sidebar.radio("Choose Mode", ["📸 Upload Image", "🎥 Zoom/Teams Live Detection"])
 
-    # Predict and display result
-    result = predict_image(image)
+# ------------------------------------------------------
+# MODE 1: IMAGE UPLOAD
+# ------------------------------------------------------
+if mode == "📸 Upload Image":
+    uploaded_file = st.file_uploader("Upload an image for deepfake detection", type=["jpg", "jpeg", "png"])
+    if uploaded_file:
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, 1)
+        st.image(image, channels="BGR", caption="Uploaded Image", use_container_width=True)
 
-    # Set the color based on the result
-    # Set the color based on the result
-    if result == "Fake":
-        color = "red"
-        description = "Our deepfake detection model has classified this image as fake based on various factors. Deepfake images often exhibit certain artifacts or inconsistencies that are not present in real images. These could include mismatched facial features, unnatural lighting or shadows, or inconsistencies in facial expressions. Our model has been trained to recognize these patterns and distinguish between real and fake images with high accuracy."
+        result = predict_image(image)
+        color = "green" if result == "Real" else "red"
 
-    elif result == "Real":
-        color = "green"
-        description = "Our deepfake detection model has classified this image as real. Real images typically lack the subtle anomalies and inconsistencies present in deepfake images. Our model has been trained on a diverse dataset of real and fake images, enabling it to accurately differentiate between the two categories."
-
-    # Display the title with the appropriate color
-    st.markdown(f"<h1 style='color:{color};'>The image is {result}</h1>", unsafe_allow_html=True)
-
-    # Display the description
-    st.write(description)
+        st.markdown(f"<h2 style='color:{color};text-align:center;'>The image is {result}</h2>", unsafe_allow_html=True)
 
 
-st.title("Model Training Graph")
-st.markdown("### Model Training accuracy: 95%")
-#st.image("Figure_2.png")
-st.markdown("### Model Training Loss")
-# st.image("Figure_1.png")
+# ------------------------------------------------------
+# MODE 2: LIVE ZOOM/TEAMS DETECTION
+# ------------------------------------------------------
+elif mode == "🎥 Zoom/Teams Live Detection":
+    st.info("Make sure your Zoom or Microsoft Teams meeting window is visible on screen (not minimized).")
 
-# Footer section
-st.markdown("""
----
-**Contact Us:**
-For more information and queries, please contact us at [contact@example.com](mailto:contact@example.com).
+    start_btn = st.button("Start Live Detection")
+    stop_btn = st.button("Stop Detection")
 
-**Follow us on:**
-[Twitter](https://twitter.com) | [LinkedIn](https://linkedin.com) | [Facebook](https://facebook.com)
-""")
+    if start_btn:
+        st.session_state['threads'] = start_zoom_detection()
+        if st.session_state['threads'] is None:
+            st.error("❌ Could not start detection. Please open a Zoom or Teams window.")
+        else:
+            st.success("✅ Detection started successfully.")
+            frame_placeholder = st.empty()
+            label_placeholder = st.empty()
+
+            while True:
+                frame, label = get_latest_result()
+                if frame is not None:
+                    frame_placeholder.image(frame, channels="BGR", use_container_width=True)
+                    label_placeholder.markdown(f"<h3 style='text-align:center;color:{'green' if label=='Real' else 'red'};'>Frame classified as {label}</h3>", unsafe_allow_html=True)
+                time.sleep(0.1)
+                if stop_btn:
+                    stop_zoom_detection(st.session_state['threads'])
+                    st.success("✅ Detection stopped.")
+                    break
