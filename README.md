@@ -64,55 +64,55 @@ Project Structure
 🚀 Getting Started
 To run this project, you need to set up and run both the backend and the frontend.
 
-Prerequisites
+## Prerequisites
 Node.js (v22+)
 
 Python (v3.13+) & pip
 
 Google Chrome
 
-1. Backend Setup (Code/ folder)
+## 1. Backend Setup (Code/ folder)
 First, set up the server that runs your ML model.
 
 Bash
 
-# 1. Navigate to the backend directory
+### 1. Navigate to the backend directory
 cd Code
 
-# 2. Install Node.js dependencies
+### 2. Install Node.js dependencies
 npm install
 Bash
 
-# 3. Set up the Python environment (using a virtual environment is recommended)
+### 3. Set up the Python environment (using a virtual environment is recommended)
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# 4. Install Python dependencies
+### 4. Install Python dependencies
 pip install tensorflow opencv-python numpy
 Bash
 
-# 5. Train your model (Optional - if you have the dataset)
-# Make sure your dataset is at the path specified in train.py
+### 5. Train your model (Optional - if you have the dataset)
+### Make sure your dataset is at the path specified in train.py
 python train.py
-# This will create 'model/deepfake_detection_model.h5'
+### This will create 'model/deepfake_detection_model.h5'
 
-# 6. Run the backend server
+### 6. Run the backend server
 node backgroundProcess.js
 Your backend is now running and listening on http://localhost:5000.
 
-2. Frontend Setup (cyberSentinel-extension/ folder)
+## 2. Frontend Setup (cyberSentinel-extension/ folder)
 Next, build the React popup and load the extension into Chrome.
 
 Bash
 
-# 1. In a new terminal, navigate to the React app's folder
+### 1. In a new terminal, navigate to the React app's folder
 cd cyberSentinel-extension/frontend
 
-# 2. Install dependencies
+### 2. Install dependencies
 npm install
 
-# 3. Build the static files
-# This creates the 'frontend/dist' folder for the manifest
+### 3. Build the static files
+### This creates the 'frontend/dist' folder for the manifest
 npm run build
 Now, load the extension into Chrome:
 
