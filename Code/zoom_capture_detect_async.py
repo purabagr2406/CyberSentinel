@@ -8,19 +8,15 @@ import threading
 import queue
 from collections import deque
 from mss import mss
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
-from tensorflow.keras.applications.xception import preprocess_input
+from predictor import (
+    analyze_image_bgr,
+    classify_real_probability,
+    detect_largest_face_with_bbox,
+)
 
 # ======================================================
 # GLOBAL CONFIG
 # ======================================================
-model = load_model('model/deepfake_detection_model.h5')
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-# Threshold placeholders: tune these on your validation set
-REAL_THRESHOLD = 0.65
-FAKE_THRESHOLD = 0.35
 SMOOTHING_WINDOW = 10
 
 frame_queue = queue.Queue(maxsize=2)
@@ -32,58 +28,14 @@ stop_flag = False
 # ======================================================
 # MODEL INFERENCE
 # ======================================================
-def preprocess_frame(frame):
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # important
-    frame = cv2.resize(frame, (224, 224))
-    frame = img_to_array(frame)
-    frame = np.expand_dims(frame, axis=0)
-    frame = preprocess_input(frame)
-    return frame
-
-
-
-def classify_probability(real_prob):
-    if real_prob >= REAL_THRESHOLD:
-        return "Real"
-    if real_prob <= FAKE_THRESHOLD:
-        return "Fake"
-    return "Uncertain"
-
-
-def detect_largest_face(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(60, 60)
-    )
-
-    if len(faces) == 0:
-        return None, None
-
-    x, y, w, h = max(faces, key=lambda b: b[2] * b[3])
-    pad = int(0.2 * max(w, h))
-
-    x1 = max(0, x - pad)
-    y1 = max(0, y - pad)
-    x2 = min(frame.shape[1], x + w + pad)
-    y2 = min(frame.shape[0], y + h + pad)
-
-    return frame[y1:y2, x1:x2], (x1, y1, x2, y2)
-
-
 def predict_frame(frame):
-    face_crop, face_bbox = detect_largest_face(frame)
-    if face_crop is None:
-        return "No Face", None, None, None
-
-    processed = preprocess_frame(face_crop)
-    real_prob = float(model.predict(processed, verbose=0)[0][0])  # sigmoid probability
+    prediction = analyze_image_bgr(frame)
+    _, face_bbox = detect_largest_face_with_bbox(frame)
+    real_prob = prediction["real_prob"]
 
     prob_history.append(real_prob)
     smoothed_prob = float(np.mean(prob_history))
-    label = classify_probability(smoothed_prob)
+    label = classify_real_probability(smoothed_prob)
     return label, real_prob, smoothed_prob, face_bbox
 
 

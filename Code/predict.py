@@ -1,61 +1,11 @@
 import base64
 import json
 import sys
+from collections import defaultdict
 
 import cv2
 import numpy as np
-from tensorflow.keras.applications.xception import preprocess_input
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
-
-MODEL_PATH = "model/deepfake_detection_model.h5"
-TARGET_SIZE = (224, 224)
-REAL_THRESHOLD = 0.50
-FAKE_THRESHOLD = 0.35
-
-model = load_model(MODEL_PATH, compile=False)
-face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-)
-
-
-def detect_largest_face(image_bgr):
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(
-        gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
-    )
-    if len(faces) == 0:
-        return image_bgr
-
-    x, y, w, h = max(faces, key=lambda b: b[2] * b[3])
-    pad = int(0.2 * max(w, h))
-    x1 = max(0, x - pad)
-    y1 = max(0, y - pad)
-    x2 = min(image_bgr.shape[1], x + w + pad)
-    y2 = min(image_bgr.shape[0], y + h + pad)
-    return image_bgr[y1:y2, x1:x2]
-
-
-def preprocess_image_bgr(image_bgr):
-    image = detect_largest_face(image_bgr)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = cv2.resize(image, TARGET_SIZE)
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = preprocess_input(image)
-    return image
-
-
-def predict_image_bgr(image_bgr):
-    image = preprocess_image_bgr(image_bgr)
-    real_prob = float(model.predict(image, verbose=0)[0][0])
-    if real_prob >= REAL_THRESHOLD:
-        label = "Real"
-    elif real_prob <= FAKE_THRESHOLD:
-        label = "Fake"
-    else:
-        label = "Uncertain"
-    return label, real_prob
+from predictor import analyze_image_bgr
 
 
 def decode_data_url_to_bgr(data_url):
@@ -80,7 +30,7 @@ def main():
             print(json.dumps({"error": "No frames provided"}), flush=True)
             return
 
-        results = []
+        grouped_predictions = defaultdict(list)
         for frame in frames:
             participant_id = frame.get("participantId")
             image_data = frame.get("imageData", "")
@@ -90,22 +40,73 @@ def main():
                 if image_bgr is None:
                     raise ValueError("Could not decode image")
 
-                label, real_prob = predict_image_bgr(image_bgr)
-                results.append(
-                    {
-                        "participantId": participant_id,
-                        "label": label,
-                        "real_prob": round(real_prob, 4),
-                    }
-                )
+                prediction = analyze_image_bgr(image_bgr)
+                grouped_predictions[participant_id].append(prediction)
             except Exception as frame_err:
-                results.append(
+                grouped_predictions[participant_id].append(
                     {
-                        "participantId": participant_id,
                         "label": "Error",
                         "error": str(frame_err),
                     }
                 )
+
+        results = []
+        for participant_id, predictions in grouped_predictions.items():
+            valid_predictions = [item for item in predictions if item.get("label") != "Error"]
+            if not valid_predictions:
+                results.append(
+                    {
+                        "participantId": participant_id,
+                        "label": "Error",
+                        "error": predictions[0].get("error", "No valid frames"),
+                    }
+                )
+                continue
+
+            avg_real_prob = float(
+                np.mean([item["real_prob"] for item in valid_predictions])
+            )
+            avg_fake_prob = 1.0 - avg_real_prob
+            avg_confidence = float(
+                np.mean([item["confidence"] for item in valid_predictions])
+            )
+
+            real_votes = sum(1 for item in valid_predictions if item["label"] == "Real")
+            fake_votes = sum(1 for item in valid_predictions if item["label"] == "Fake")
+            uncertain_votes = sum(
+                1 for item in valid_predictions if item["label"] == "Uncertain"
+            )
+
+            if real_votes > fake_votes and real_votes >= uncertain_votes:
+                final_label = "Real"
+            elif fake_votes > real_votes and fake_votes >= uncertain_votes:
+                final_label = "Fake"
+            else:
+                if avg_real_prob >= 0.55:
+                    final_label = "Real"
+                elif avg_real_prob <= 0.45:
+                    final_label = "Fake"
+                else:
+                    final_label = "Uncertain"
+
+            results.append(
+                {
+                    "participantId": participant_id,
+                    "label": final_label,
+                    "real_prob": round(avg_real_prob, 4),
+                    "fake_prob": round(avg_fake_prob, 4),
+                    "confidence": round(avg_confidence, 4),
+                    "used_face_crop": any(
+                        item.get("used_face_crop", False) for item in valid_predictions
+                    ),
+                    "frames_analyzed": len(valid_predictions),
+                    "vote_breakdown": {
+                        "real": real_votes,
+                        "fake": fake_votes,
+                        "uncertain": uncertain_votes,
+                    },
+                }
+            )
 
         print(json.dumps({"timestamp": timestamp, "results": results}), flush=True)
     except Exception as err:
