@@ -3,6 +3,7 @@ venv/
 
 # Dataset
 Code/real_and_fake_face_detection/
+Code/celebdf_faces/
 
 # Model weights
 *.h5

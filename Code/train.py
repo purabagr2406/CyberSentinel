@@ -1,343 +1,238 @@
-# # ===============================================
-# # DeepFake Detection Model Training (FIXED Version)
-# # ===============================================
-
-# import numpy as np
-# import os
-# import cv2
-# import matplotlib.pyplot as plt
-# import tensorflow as tf
-# from tensorflow.keras.applications import Xception  # <--- CHANGED: Using Xception, not MobileNet
-# from tensorflow.keras.models import Sequential
-# from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, GlobalAveragePooling2D
-# # Removed l2 regularizer, Dropout is more effective here
-# from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
-# from tensorflow.keras.preprocessing.image import ImageDataGenerator
-# from sklearn.utils.class_weight import compute_class_weight
-# from tensorflow.keras.optimizers import Adam  # <--- CHANGED: Explicitly import Adam
-
-# # ===============================================
-# # Dataset paths (No changes)
-# # ===============================================
-# real = "./real_and_fake_face_detection/real_and_fake_face/training_real/"
-# fake = "./real_and_fake_face_detection/real_and_fake_face/training_fake/"
-# dataset_path = "real_and_fake_face_detection/real_and_fake_face"
-
-# # ===============================================
-# # Visualize few samples (optional) (No changes)
-# # ===============================================
-# def load_img(path):
-#     image = cv2.imread(path)
-#     image = cv2.resize(image, (224, 224)) # <--- CHANGED: Visualize at the correct size
-#     return image[..., ::-1]
-
-# # (Visualization code is fine, but it will now show 224x224 images)
-# # ... [your visualization code] ...
-
-# # ===============================================
-# # CRITICAL FIX: Add JPEG Compression Augmentation
-# # ===============================================
-# # This function mimics real-world compression artifacts.
-# # It will be applied BEFORE other augmentations.
-# def apply_compression(x):
-#     # Input 'x' is a NumPy array with values [0, 255]
-#     # Cast to uint8 for compression
-#     x_uint8 = tf.cast(x, tf.uint8)
-#     # Apply random JPEG quality
-#     x_compressed = tf.image.random_jpeg_quality(x_uint8, 75, 95)
-#     # Cast back to float32 for the rest of the generator pipeline
-#     x_float32 = tf.cast(x_compressed, tf.float32)
-#     return x_float32
-
-# # ===============================================
-# # Data augmentation (fixed)
-# # ===============================================
-# data_with_aug = ImageDataGenerator(
-#     preprocessing_function=apply_compression, # <--- CHANGED: Added compression
-#     rescale=1. / 255,                       # <--- IMPORTANT: Rescale happens *after* compression
-#     rotation_range=15,                      # <--- CHANGED: Reduced geometric augmentation
-#     width_shift_range=0.1,                  # <--- CHANGED: Reduced
-#     height_shift_range=0.1,                 # <--- CHANGED: Reduced
-#     shear_range=0.1,                        # <--- CHANGED: Reduced
-#     zoom_range=0.1,                         # <--- CHANGED: Reduced
-#     brightness_range=[0.8, 1.2],
-#     horizontal_flip=True,
-#     fill_mode='nearest',
-#     validation_split=0.2
-# )
-
-# # Target size must match the model (224x224 is standard for Xception)
-# TARGET_SIZE = (224, 224) # <--- CHANGED: 96x96 is too small
-# BATCH_SIZE = 32
-
-# train = data_with_aug.flow_from_directory(
-#     dataset_path,
-#     class_mode="binary",      # <--- This is correct
-#     target_size=TARGET_SIZE,  # <--- CHANGED
-#     batch_size=BATCH_SIZE,
-#     subset="training",
-#     shuffle=True
-# )
-
-# val = data_with_aug.flow_from_directory(
-#     dataset_path,
-#     class_mode="binary",
-#     target_size=TARGET_SIZE,  # <--- CHANGED
-#     batch_size=BATCH_SIZE,
-#     subset="validation",
-#     shuffle=False
-# )
-
-# # ===============================================
-# # Handle possible class imbalance (No changes)
-# # ===============================================
-# labels = train.classes
-# classes = np.unique(labels)
-# class_weights = compute_class_weight('balanced', classes=classes, y=labels)
-# class_weight_dict = dict(enumerate(class_weights))
-# print("⚖️ Class Weights:", class_weight_dict)
-
-# # ===============================================
-# # Base model (CHANGED to Xception)
-# # ===============================================
-# tf.keras.backend.clear_session()
-
-# base_model = Xception(
-#     include_top=False, 
-#     weights="imagenet", 
-#     input_shape=(TARGET_SIZE[0], TARGET_SIZE[1], 3) # <--- CHANGED
-# )
-
-# # --- STAGE 1: HEAD TRAINING ---
-# # Freeze the entire base model. We will only train the new layers.
-# base_model.trainable = False # <--- CHANGED: Freeze the whole model first
-
-# # ===============================================
-# # Classifier head (Simplified and Corrected)
-# # ===============================================
-# model = Sequential([
-#     base_model,
-#     GlobalAveragePooling2D(),
-#     BatchNormalization(),  # <--- Good for stabilizing
-#     Dropout(0.5),          # <--- Critical for regularization
-#     Dense(1, activation='sigmoid') # <--- CHANGED: 1 output, 'sigmoid' for binary
-# ])
-
-# # ===============================================
-# # Compile (Corrected)
-# # ===============================================
-# optimizer = Adam(learning_rate=1e-4) # <--- A good starting rate
-# model.compile(
-#     loss="binary_crossentropy", # <--- CHANGED: Correct loss for 'sigmoid'
-#     optimizer=optimizer, 
-#     metrics=["accuracy"]
-# )
-# model.summary()
-
-# # ===============================================
-# # Callbacks (No changes, this part was good)
-# # ===============================================
-# checkpoint = ModelCheckpoint(
-#     'model/deepfake_detection_model.h5', 
-#     monitor='val_loss',
-#     save_best_only=True,
-#     verbose=1
-# )
-
-# reduce_lr = ReduceLROnPlateau(
-#     monitor='val_loss',
-#     factor=0.2, # <--- CHANGED: Reduce more aggressively
-#     patience=2,
-#     min_lr=1e-7,
-#     verbose=1
-# )
-
-# early_stop = EarlyStopping(
-#     monitor='val_loss',
-#     patience=5, # <--- CHANGED: Stop a little sooner
-#     restore_best_weights=True,
-#     verbose=1
-# )
-
-# callbacks = [checkpoint, reduce_lr, early_stop]
-
-# # ===============================================
-# # Training (Stage 1)
-# # ===============================================
-# print("--- STARTING STAGE 1: HEAD TRAINING ---")
-
-# history = model.fit(
-#     train,
-#     validation_data=val,
-#     epochs=30,             # Early stopping will find the best epoch
-#     callbacks=callbacks,
-#     class_weight=class_weight_dict
-# )
-
-# print("✅ Stage 1 complete. Best model saved to 'model/deepfake_detection_model.h5'")
-
-# # ===============================================
-# # Plot Training Curves (No changes)
-# # ===============================================
-# # ... [your plotting code] ...
-
-# ===============================================
-# DeepFake Detection Model Training
-# (Works With training_fake / training_real)
-# ===============================================
+import argparse
+import os
 
 import numpy as np
 import tensorflow as tf
+from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.applications import Xception
 from tensorflow.keras.applications.xception import preprocess_input
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.layers import BatchNormalization, Dense, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.metrics import AUC, BinaryAccuracy
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, GlobalAveragePooling2D
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.optimizers import Adam
-from sklearn.utils.class_weight import compute_class_weight
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-# ===============================================
-# Dataset Path (KEEP YOUR STRUCTURE)
-# ===============================================
-dataset_path = "real_and_fake_face_detection/real_and_fake_face"
 
 TARGET_SIZE = (224, 224)
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 
-# ===============================================
-# Data Generator
-# ===============================================
-data_gen = ImageDataGenerator(
-    preprocessing_function=preprocess_input,
-    rotation_range=15,
-    width_shift_range=0.1,
-    height_shift_range=0.1,
-    zoom_range=0.1,
-    brightness_range=[0.8, 1.2],
-    horizontal_flip=True,
-    validation_split=0.2
-)
 
-train = data_gen.flow_from_directory(
-    dataset_path,               # <-- parent folder
-    target_size=TARGET_SIZE,
-    batch_size=BATCH_SIZE,
-    class_mode="binary",
-    subset="training",
-    shuffle=True
-)
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train the deepfake detector on a prepared image dataset."
+    )
+    parser.add_argument(
+        "--dataset-root",
+        default="real_and_fake_face_detection/real_and_fake_face",
+        help=(
+            "Dataset root. Supports either legacy layout with 'training_fake' / "
+            "'training_real' or split layout with train/val subfolders."
+        ),
+    )
+    parser.add_argument(
+        "--output-model",
+        default="model/deepfake_detection_model.h5",
+        help="Where to save the best model.",
+    )
+    parser.add_argument(
+        "--epochs-stage1",
+        type=int,
+        default=10,
+        help="Epochs for training the classifier head.",
+    )
+    parser.add_argument(
+        "--epochs-stage2",
+        type=int,
+        default=10,
+        help="Epochs for fine-tuning the backbone.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
+        help="Batch size for training and validation.",
+    )
+    return parser.parse_args()
 
-val = data_gen.flow_from_directory(
-    dataset_path,
-    target_size=TARGET_SIZE,
-    batch_size=BATCH_SIZE,
-    class_mode="binary",
-    subset="validation",
-    shuffle=False
-)
 
-print("Class mapping:", train.class_indices)
-# Expect: {'training_fake': 0, 'training_real': 1}
+def has_explicit_splits(dataset_root):
+    train_dir = os.path.join(dataset_root, "train")
+    val_dir = os.path.join(dataset_root, "val")
+    return os.path.isdir(train_dir) and os.path.isdir(val_dir)
 
-# ===============================================
-# Class Weights
-# ===============================================
-labels = train.classes
-classes = np.unique(labels)
-class_weights = compute_class_weight('balanced', classes=classes, y=labels)
-class_weight_dict = dict(enumerate(class_weights))
-print("Class Weights:", class_weight_dict)
 
-# ===============================================
-# Load Xception
-# ===============================================
-tf.keras.backend.clear_session()
+def build_generators(dataset_root, batch_size):
+    train_datagen = ImageDataGenerator(
+        preprocessing_function=preprocess_input,
+        rotation_range=12,
+        width_shift_range=0.08,
+        height_shift_range=0.08,
+        zoom_range=0.08,
+        brightness_range=[0.85, 1.15],
+        horizontal_flip=True,
+    )
+    val_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
 
-base_model = Xception(
-    include_top=False,
-    weights="imagenet",
-    input_shape=(224, 224, 3)
-)
+    if has_explicit_splits(dataset_root):
+        train_dir = os.path.join(dataset_root, "train")
+        val_dir = os.path.join(dataset_root, "val")
 
-# ===============================================
-# STAGE 1: Train Head
-# ===============================================
-base_model.trainable = False
+        train_gen = train_datagen.flow_from_directory(
+            train_dir,
+            target_size=TARGET_SIZE,
+            batch_size=batch_size,
+            class_mode="binary",
+            shuffle=True,
+        )
+        val_gen = val_datagen.flow_from_directory(
+            val_dir,
+            target_size=TARGET_SIZE,
+            batch_size=batch_size,
+            class_mode="binary",
+            shuffle=False,
+        )
+        return train_gen, val_gen
 
-model = Sequential([
-    base_model,
-    GlobalAveragePooling2D(),
-    BatchNormalization(),
-    Dropout(0.5),
-    Dense(128, activation='relu'),
-    Dropout(0.4),
-    Dense(1, activation='sigmoid')
-])
+    legacy_datagen = ImageDataGenerator(
+        preprocessing_function=preprocess_input,
+        rotation_range=12,
+        width_shift_range=0.08,
+        height_shift_range=0.08,
+        zoom_range=0.08,
+        brightness_range=[0.85, 1.15],
+        horizontal_flip=True,
+        validation_split=0.2,
+    )
 
-model.compile(
-    optimizer=Adam(1e-4),
-    loss="binary_crossentropy",
-    metrics=["accuracy"]
-)
+    train_gen = legacy_datagen.flow_from_directory(
+        dataset_root,
+        target_size=TARGET_SIZE,
+        batch_size=batch_size,
+        class_mode="binary",
+        subset="training",
+        shuffle=True,
+    )
+    val_gen = legacy_datagen.flow_from_directory(
+        dataset_root,
+        target_size=TARGET_SIZE,
+        batch_size=batch_size,
+        class_mode="binary",
+        subset="validation",
+        shuffle=False,
+    )
+    return train_gen, val_gen
 
-# ===============================================
-# Callbacks
-# ===============================================
-checkpoint = ModelCheckpoint(
-    'model/deepfake_detection_model.h5',
-    monitor='val_loss',
-    save_best_only=True,
-    verbose=1
-)
 
-reduce_lr = ReduceLROnPlateau(
-    monitor='val_loss',
-    factor=0.2,
-    patience=2,
-    min_lr=1e-7,
-    verbose=1
-)
+def build_model():
+    tf.keras.backend.clear_session()
 
-early_stop = EarlyStopping(
-    monitor='val_loss',
-    patience=5,
-    restore_best_weights=True,
-    verbose=1
-)
+    base_model = Xception(
+        include_top=False,
+        weights="imagenet",
+        input_shape=(TARGET_SIZE[0], TARGET_SIZE[1], 3),
+    )
+    base_model.trainable = False
 
-callbacks = [checkpoint, reduce_lr, early_stop]
+    model = Sequential(
+        [
+            base_model,
+            GlobalAveragePooling2D(),
+            BatchNormalization(),
+            Dropout(0.5),
+            Dense(128, activation="relu"),
+            Dropout(0.4),
+            Dense(1, activation="sigmoid"),
+        ]
+    )
+    return model, base_model
 
-print("\n--- STAGE 1 TRAINING ---")
 
-model.fit(
-    train,
-    validation_data=val,
-    epochs=15,
-    callbacks=callbacks,
-    class_weight=class_weight_dict
-)
+def compile_model(model, learning_rate):
+    model.compile(
+        optimizer=Adam(learning_rate),
+        loss="binary_crossentropy",
+        metrics=[BinaryAccuracy(name="accuracy"), AUC(name="auc")],
+    )
 
-# ===============================================
-# STAGE 2: Fine Tune
-# ===============================================
-print("\n--- STAGE 2 FINE TUNING ---")
 
-for layer in base_model.layers[-50:]:
-    layer.trainable = True
+def compute_class_weights(train_gen):
+    labels = train_gen.classes
+    classes = np.unique(labels)
+    weights = compute_class_weight("balanced", classes=classes, y=labels)
+    return dict(enumerate(weights))
 
-model.compile(
-    optimizer=Adam(1e-5),
-    loss="binary_crossentropy",
-    metrics=["accuracy"]
-)
 
-model.fit(
-    train,
-    validation_data=val,
-    epochs=20,
-    callbacks=callbacks,
-    class_weight=class_weight_dict
-)
+def ensure_parent_dir(path):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
-print("✅ Training Complete!")
+
+def main():
+    args = parse_args()
+
+    train_gen, val_gen = build_generators(args.dataset_root, args.batch_size)
+    class_weight_dict = compute_class_weights(train_gen)
+
+    print("Class mapping:", train_gen.class_indices)
+    print("Class weights:", class_weight_dict)
+    print("Training samples:", train_gen.samples)
+    print("Validation samples:", val_gen.samples)
+
+    model, base_model = build_model()
+    ensure_parent_dir(args.output_model)
+
+    callbacks = [
+        ModelCheckpoint(
+            args.output_model,
+            monitor="val_auc",
+            mode="max",
+            save_best_only=True,
+            verbose=1,
+        ),
+        ReduceLROnPlateau(
+            monitor="val_auc",
+            mode="max",
+            factor=0.3,
+            patience=2,
+            min_lr=1e-7,
+            verbose=1,
+        ),
+        EarlyStopping(
+            monitor="val_auc",
+            mode="max",
+            patience=4,
+            restore_best_weights=True,
+            verbose=1,
+        ),
+    ]
+
+    print("\n--- STAGE 1: TRAIN HEAD ---")
+    compile_model(model, learning_rate=1e-4)
+    model.fit(
+        train_gen,
+        validation_data=val_gen,
+        epochs=args.epochs_stage1,
+        callbacks=callbacks,
+        class_weight=class_weight_dict,
+    )
+
+    print("\n--- STAGE 2: FINE TUNE ---")
+    for layer in base_model.layers[-40:]:
+        layer.trainable = True
+
+    compile_model(model, learning_rate=1e-5)
+    model.fit(
+        train_gen,
+        validation_data=val_gen,
+        epochs=args.epochs_stage2,
+        callbacks=callbacks,
+        class_weight=class_weight_dict,
+    )
+
+    print(f"\nTraining complete. Best model saved to: {args.output_model}")
+
+
+if __name__ == "__main__":
+    main()

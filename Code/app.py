@@ -1,8 +1,26 @@
+import subprocess
+import sys
 import time
 
 import cv2
 import numpy as np
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+
+def _ensure_streamlit_runtime():
+    # Allow `python app.py` to behave like `streamlit run app.py`.
+    if get_script_run_ctx() is not None:
+        return
+    if __name__ != "__main__":
+        return
+
+    raise SystemExit(
+        subprocess.call([sys.executable, "-m", "streamlit", "run", __file__])
+    )
+
+
+_ensure_streamlit_runtime()
 
 from predictor import analyze_image_bgr
 from zoom_capture_detect_async import (

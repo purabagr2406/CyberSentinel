@@ -1,4 +1,5 @@
 import os
+import sys
 
 import cv2
 import numpy as np
@@ -6,43 +7,56 @@ from tensorflow.keras.applications.xception import preprocess_input
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array
 
-MODEL_PATH = os.path.join("model", "deepfake_detection_model.h5")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "model")
+PREFERRED_MODEL_PATH = os.path.join(MODEL_DIR, "deepfake_detection_model_celebdf.h5")
+FALLBACK_MODEL_PATH = os.path.join(MODEL_DIR, "deepfake_detection_model.h5")
+MODEL_PATH = (
+    PREFERRED_MODEL_PATH if os.path.exists(PREFERRED_MODEL_PATH) else FALLBACK_MODEL_PATH
+)
+
 TARGET_SIZE = (224, 224)
 
-# The model performs best on the local dataset when we classify the full image
-# directly. Face crops are still useful for diagnostics and overlays, but not
-# as the main decision signal.
 REAL_THRESHOLD = 0.52
 FAKE_THRESHOLD = 0.48
 
 POSITIVE_CLASS_LABEL = "Real"
 NEGATIVE_CLASS_LABEL = "Fake"
 
-model = load_model(MODEL_PATH, compile=False)
+
+try:
+    model = load_model(MODEL_PATH, compile=False)
+except Exception as e:
+    print(f"MODEL LOAD ERROR: {str(e)}", file=sys.stderr)
+    raise
+
+
 face_cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
 
 
-def detect_largest_face(image_bgr):
-    face_crop, _ = detect_largest_face_with_bbox(image_bgr)
-    return face_crop
-
-
 def detect_largest_face_with_bbox(image_bgr):
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(
-        gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(60, 60),
     )
+
     if len(faces) == 0:
         return None, None
 
     x, y, w, h = max(faces, key=lambda box: box[2] * box[3])
     pad = int(0.2 * max(w, h))
+
     x1 = max(0, x - pad)
     y1 = max(0, y - pad)
     x2 = min(image_bgr.shape[1], x + w + pad)
     y2 = min(image_bgr.shape[0], y + h + pad)
+
     return image_bgr[y1:y2, x1:x2], (x1, y1, x2, y2)
 
 
@@ -56,7 +70,8 @@ def preprocess_image_bgr(image_bgr):
 
 def predict_real_probability(image_bgr):
     processed_image = preprocess_image_bgr(image_bgr)
-    return float(model.predict(processed_image, verbose=0)[0][0])
+    pred = model.predict(processed_image, verbose=0)[0][0]
+    return float(pred)
 
 
 def classify_real_probability(real_prob):
@@ -71,9 +86,8 @@ def analyze_image_bgr(image_bgr):
     if image_bgr is None or image_bgr.size == 0:
         raise ValueError("Invalid image")
 
-    full_image_prob = predict_real_probability(image_bgr)
+    real_prob = predict_real_probability(image_bgr)
     face_crop, _ = detect_largest_face_with_bbox(image_bgr)
-    real_prob = full_image_prob
     used_face_crop = face_crop is not None
 
     fake_prob = 1.0 - real_prob

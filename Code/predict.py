@@ -63,13 +63,9 @@ def main():
                 )
                 continue
 
-            avg_real_prob = float(
-                np.mean([item["real_prob"] for item in valid_predictions])
-            )
+            avg_real_prob = float(np.mean([item["real_prob"] for item in valid_predictions]))
             avg_fake_prob = 1.0 - avg_real_prob
-            avg_confidence = float(
-                np.mean([item["confidence"] for item in valid_predictions])
-            )
+            avg_confidence = float(np.mean([item["confidence"] for item in valid_predictions]))
 
             real_votes = sum(1 for item in valid_predictions if item["label"] == "Real")
             fake_votes = sum(1 for item in valid_predictions if item["label"] == "Fake")
