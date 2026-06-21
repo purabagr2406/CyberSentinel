@@ -82,6 +82,30 @@ function produceFrameBatch() {
     console.log(`PRODUCER: Added batch of ${batchArray.length} frames. Queue size: ${frameQueue.length}`);
   }
 }
+
+function formatAnalysisResponse(responseData) {
+  if (typeof responseData.result === "string") {
+    return responseData.result;
+  }
+
+  const items = Array.isArray(responseData.results)
+    ? responseData.results
+    : Array.isArray(responseData.details?.results)
+      ? responseData.details.results
+      : [];
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return items
+    .map((item) => {
+      const prob = item.real_prob !== undefined ? ` (${item.real_prob})` : "";
+      const extraError = item.error ? ` [${item.error}]` : "";
+      return `${item.participantId}: ${item.label}${prob}${extraError}`;
+    })
+    .join(" | ");
+}
 // -----------------------------------------------------------------
 async function runConsumerLoop() {
   console.log("CONSUMER: Loop started. Waiting for frames...");
@@ -105,16 +129,31 @@ async function runConsumerLoop() {
             timestamp: new Date().toISOString()
           }),
         });
+        const responseData = await response.json();
 
-        if (!response.ok) {
-          throw new Error(`Backend returned status: ${response.status}`);
+        if (!response.ok || responseData.success === false) {
+          console.warn("CONSUMER: Backend returned no analysis.", {
+            status: response.status,
+            body: responseData,
+          });
+          continue;
         }
 
-        const analysisResult = await response.json();
+        const analysisResult = formatAnalysisResponse(responseData);
+        if (!analysisResult) {
+          console.warn("CONSUMER: Response had no usable analysis payload.", responseData);
+          continue;
+        }
+
         console.log("CONSUMER: Received analysis:", analysisResult);
+        if (responseData.details) {
+          console.log("CONSUMER: Raw backend details:", responseData.details);
+        }
+
+        
 
       } catch (error) {
-        console.error("CONSUMER Error:", error);
+        console.error("CONSUMER Error123:", error);
       }
       
     } else {

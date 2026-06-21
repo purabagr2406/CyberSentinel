@@ -6,36 +6,37 @@ import cv2
 import time
 import threading
 import queue
+from collections import deque
 from mss import mss
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
+from predictor import (
+    analyze_image_bgr,
+    classify_real_probability,
+    detect_largest_face_with_bbox,
+)
 
 # ======================================================
 # GLOBAL CONFIG
 # ======================================================
-model = load_model('model/deepfake_detection_model.h5')
+SMOOTHING_WINDOW = 10
 
 frame_queue = queue.Queue(maxsize=2)
 result_queue = queue.Queue(maxsize=1)
+prob_history = deque(maxlen=SMOOTHING_WINDOW)
 stop_flag = False
 
 
 # ======================================================
 # MODEL INFERENCE
 # ======================================================
-def preprocess_frame(frame):
-    frame = cv2.resize(frame, (96, 96))
-    frame = img_to_array(frame)
-    frame = np.expand_dims(frame, axis=0)
-    frame = frame / 255.0
-    return frame
-
-
 def predict_frame(frame):
-    processed = preprocess_frame(frame)
-    pred = model.predict(processed)
-    label = np.argmax(pred, axis=1)[0]
-    return "Fake" if label == 0 else "Real"
+    prediction = analyze_image_bgr(frame)
+    _, face_bbox = detect_largest_face_with_bbox(frame)
+    real_prob = prediction["real_prob"]
+
+    prob_history.append(real_prob)
+    smoothed_prob = float(np.mean(prob_history))
+    label = classify_real_probability(smoothed_prob)
+    return label, real_prob, smoothed_prob, face_bbox
 
 
 # ======================================================
@@ -45,14 +46,14 @@ def get_meeting_window():
     for w in gw.getWindowsWithTitle(''):
         title = w.title.lower()
         if "zoom meeting" in title or "microsoft teams" in title:
-            print(f"✅ Found meeting window: {w.title}")
+            print(f"Found meeting window: {w.title}")
             return {
                 'top': w.top,
                 'left': w.left,
                 'width': w.width,
                 'height': w.height
             }
-    print("❌ No Zoom/Teams window found. Make sure the meeting is open.")
+    print("No Zoom/Teams window found. Make sure the meeting is open.")
     return None
 
 
@@ -79,9 +80,9 @@ def inference_loop():
     while not stop_flag:
         if not frame_queue.empty():
             frame = frame_queue.get()
-            label = predict_frame(frame)
+            label, raw_score, smooth_score, face_bbox = predict_frame(frame)
             if not result_queue.full():
-                result_queue.put((frame, label))
+                result_queue.put((frame, label, raw_score, smooth_score, face_bbox))
 
 
 # ======================================================
@@ -90,12 +91,14 @@ def inference_loop():
 def start_zoom_detection():
     """Initialize threads for capturing and inference."""
     global stop_flag
+
+    prob_history.clear()
     bbox = get_meeting_window()
     if not bbox:
-        print("❌ No meeting window detected.")
+        print("No meeting window detected.")
         return None
 
-    print(f"📷 Capturing region: {bbox}")
+    print(f"Capturing region: {bbox}")
     stop_flag = False
 
     t1 = threading.Thread(target=capture_frames, args=(bbox,))
@@ -113,7 +116,7 @@ def stop_zoom_detection(threads):
     for t in threads:
         t.join()
     cv2.destroyAllWindows()
-    print("✅ Detection stopped.")
+    print("Detection stopped.")
 
 
 # ======================================================
@@ -122,8 +125,27 @@ def stop_zoom_detection(threads):
 def get_latest_result():
     """Return the latest frame and label if available."""
     if not result_queue.empty():
-        frame, label = result_queue.get()
-        color = (0, 255, 0) if label == "Real" else (0, 0, 255)
+        frame, label, raw_score, smooth_score, face_bbox = result_queue.get()
+
+        if label == "Real":
+            color = (0, 255, 0)
+        elif label == "Fake":
+            color = (0, 0, 255)
+        else:
+            color = (0, 255, 255)
+
+        if face_bbox is not None:
+            x1, y1, x2, y2 = face_bbox
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
         cv2.putText(frame, f"Status: {label}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+        if raw_score is not None:
+            cv2.putText(frame, f"Real prob (raw): {raw_score:.3f}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            cv2.putText(frame, f"Real prob (smooth): {smooth_score:.3f}", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        else:
+            cv2.putText(frame, "No face detected", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+
         return frame, label
+
     return None, None
