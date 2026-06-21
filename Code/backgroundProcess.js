@@ -9,6 +9,7 @@ const app = express();
 const PORT = 5000;
 const VENV_PYTHON = path.join(__dirname, "venv", "Scripts", "python.exe");
 const PYTHON_CMD = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python";
+const USE_TEMP_MODEL_RESPONSE = true;
 
 // Middleware
 app.use(
@@ -38,14 +39,65 @@ function makeSafeResponder(res) {
   };
 }
 
+function buildTemporaryDetectionResponse(frames, timestamp) {
+  const normalizedResult = (process.env.TEMP_DEEPFAKE_RESULT || "no").toLowerCase();
+  const isDeepfake = normalizedResult === "yes" || normalizedResult === "true";
+  const label = isDeepfake ? "Fake" : "Real";
+  const realProb = isDeepfake ? 0.12 : 0.91;
+  const fakeProb = 1 - realProb;
+
+  const results = frames.map((frame, index) => ({
+    participantId: frame.participantId || `video_${index}`,
+    deepfake: isDeepfake ? "yes" : "no",
+    label,
+    real_prob: realProb,
+    fake_prob: fakeProb,
+    confidence: 0.82,
+    used_face_crop: false,
+    frames_analyzed: 1,
+    vote_breakdown: {
+      real: isDeepfake ? 0 : 1,
+      fake: isDeepfake ? 1 : 0,
+      uncertain: 0,
+    },
+  }));
+
+  const summary = results
+    .map((item) => `${item.participantId}: deepfake=${item.deepfake}`)
+    .join(" | ");
+
+  return {
+    success: true,
+    result: summary,
+    details: {
+      timestamp,
+      temporary: true,
+      results,
+    },
+  };
+}
+
 // Main POST endpoint for deepfake detection
 app.post('/api/', async (req, res) => {
   const frames = req.body.frames;
   const timestamp = req.body.timestamp;
   const respondOnce = makeSafeResponder(res);
 
+  console.log(
+    `Server: Received ${Array.isArray(frames) ? frames.length : 0} frame(s) at ${timestamp || "no timestamp"}.`
+  );
+
   if (!frames || frames.length === 0) {
+    console.warn("Server: Request rejected because no frames were received.");
     return respondOnce(400, { error: "No frames received" });
+  }
+
+  if (USE_TEMP_MODEL_RESPONSE) {
+    const temporaryResponse = buildTemporaryDetectionResponse(frames, timestamp);
+    console.log(
+      `Server: Temporary model mode active. Sending result: ${temporaryResponse.result}`
+    );
+    return respondOnce(200, temporaryResponse);
   }
 
   try {

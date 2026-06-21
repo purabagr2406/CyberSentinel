@@ -3,6 +3,7 @@ const BACKEND_URL = 'http://127.0.0.1:5000/api/';
 // How often to CAPTURE a new batch of frames
 const PRODUCER_INTERVAL_MS = 1000; // Capture a new batch every 1 second
 const MAX_PARTICIPANTS_TO_CAPTURE = 3;
+const STORAGE_KEY = "cyberSentinelLatestAnalysis";
 
 // --- State ---
 const frameQueue = []; // Our "data structure" (the queue)
@@ -14,6 +15,24 @@ const captureContext = captureCanvas.getContext("2d");
 
 console.log("CyberSentinel: Content script initialized.");
 // --- Helper Functions ---
+
+function canUseExtensionStorage() {
+  return typeof chrome !== "undefined" && chrome.storage?.local;
+}
+
+function publishAnalysisStatus(statusUpdate) {
+  if (!canUseExtensionStorage()) {
+    return;
+  }
+
+  chrome.storage.local.set({
+    [STORAGE_KEY]: {
+      ...statusUpdate,
+      sourceUrl: window.location.href,
+      updatedAt: new Date().toISOString(),
+    },
+  });
+}
 
 /**
  * Captures a single frame from a video element.
@@ -58,7 +77,6 @@ function produceFrameBatch() {
     const frameDataURL = captureFrameFromVideo(videoElement);
 
     if (frameDataURL) {
-      console.log(frameDataURL);
       batchArray.push({
         participantId: `video_${videoIndex}`,
         imageData: frameDataURL
@@ -118,6 +136,12 @@ async function runConsumerLoop() {
       const batchToSend = frameQueue.shift(); // .shift() pulls from the front
       
       console.log(`CONSUMER: Sending batch of ${batchToSend.length}. Queue size: ${frameQueue.length}`);
+      publishAnalysisStatus({
+        status: "analyzing",
+        message: "Analyzing the latest participant frames.",
+        queueSize: frameQueue.length,
+        framesSent: batchToSend.length,
+      });
 
       // 2. Send it and WAIT for the response
       try {
@@ -136,12 +160,25 @@ async function runConsumerLoop() {
             status: response.status,
             body: responseData,
           });
+          publishAnalysisStatus({
+            status: "error",
+            message: responseData.error || "Backend returned no analysis.",
+            httpStatus: response.status,
+            queueSize: frameQueue.length,
+            framesSent: batchToSend.length,
+          });
           continue;
         }
 
         const analysisResult = formatAnalysisResponse(responseData);
         if (!analysisResult) {
           console.warn("CONSUMER: Response had no usable analysis payload.", responseData);
+          publishAnalysisStatus({
+            status: "error",
+            message: "Response had no usable analysis payload.",
+            queueSize: frameQueue.length,
+            framesSent: batchToSend.length,
+          });
           continue;
         }
 
@@ -150,10 +187,23 @@ async function runConsumerLoop() {
           console.log("CONSUMER: Raw backend details:", responseData.details);
         }
 
-        
+        publishAnalysisStatus({
+          status: "ready",
+          summary: analysisResult,
+          results: responseData.details?.results || responseData.results || [],
+          timestamp: responseData.details?.timestamp || new Date().toISOString(),
+          queueSize: frameQueue.length,
+          framesSent: batchToSend.length,
+        });
 
       } catch (error) {
         console.error("CONSUMER Error123:", error);
+        publishAnalysisStatus({
+          status: "error",
+          message: error.message || "Could not contact backend.",
+          queueSize: frameQueue.length,
+          framesSent: batchToSend.length,
+        });
       }
       
     } else {
