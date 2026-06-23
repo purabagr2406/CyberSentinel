@@ -1,7 +1,10 @@
 import { configureStore } from "@reduxjs/toolkit";
+import frameAnalysisReducer from "../features/frameAnalysisSlice";
 
 const store = configureStore({
-	reducer: {},
+	reducer: {
+		frameAnalysis: frameAnalysisReducer,
+	},
 });
 
 export default store;

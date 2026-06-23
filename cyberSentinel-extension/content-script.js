@@ -1,19 +1,27 @@
 // --- Configuration ---
-const BACKEND_URL = 'http://127.0.0.1:5000/api/';
+const BACKEND_URL = "http://127.0.0.1:5000/api/analyze";
+const BACKEND_HEALTH_URL = "http://127.0.0.1:5000/health";
 // How often to CAPTURE a new batch of frames
 const PRODUCER_INTERVAL_MS = 1000; // Capture a new batch every 1 second
+const CONNECTION_CHECK_INTERVAL_MS = 10000;
 const MAX_PARTICIPANTS_TO_CAPTURE = 3;
+const MAX_FRAME_QUEUE_SIZE = 5;
 const STORAGE_KEY = "cyberSentinelLatestAnalysis";
 
 // --- State ---
 const frameQueue = []; // Our "data structure" (the queue)
 let lastCapturedIndex = 0; // Remembers where we left off
+let lastConnectionState = "unknown";
+let lastVideoPresenceState = "unknown";
 
 // A reusable canvas for capturing snapshots
 const captureCanvas = document.createElement("canvas");
 const captureContext = captureCanvas.getContext("2d");
 
 console.log("CyberSentinel: Content script initialized.");
+console.log(
+  "CyberSentinel: Frontend development setup active. Expecting temporary backend responses from http://127.0.0.1:5000."
+);
 // --- Helper Functions ---
 
 function canUseExtensionStorage() {
@@ -32,6 +40,34 @@ function publishAnalysisStatus(statusUpdate) {
       updatedAt: new Date().toISOString(),
     },
   });
+}
+
+async function checkBackendConnection() {
+  try {
+    const response = await fetch(BACKEND_HEALTH_URL, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Health check failed with status ${response.status}`);
+    }
+
+    const health = await response.json();
+    if (lastConnectionState !== "connected") {
+      console.log(
+        `CyberSentinel: Backend connected. Mode: ${health.mode || "unknown"}. Temporary result: ${health.temporaryResult || "no"}.`
+      );
+      lastConnectionState = "connected";
+    }
+  } catch (error) {
+    if (lastConnectionState !== "disconnected") {
+      console.warn(
+        `CyberSentinel: Backend disconnected. Start the server at http://127.0.0.1:5000 before testing the popup. ${error.message}`
+      );
+      lastConnectionState = "disconnected";
+    }
+  }
 }
 
 /**
@@ -65,7 +101,22 @@ function produceFrameBatch() {
   });
 
   if (videoElements.length === 0) {
+    if (lastVideoPresenceState !== "none") {
+      console.log("PRODUCER: No participant video streams detected.");
+      publishAnalysisStatus({
+        status: "no-video",
+        message: "No participant video is currently visible.",
+        queueSize: frameQueue.length,
+        framesSent: 0,
+      });
+      lastVideoPresenceState = "none";
+    }
     return; // No videos, do nothing
+  }
+
+  if (lastVideoPresenceState !== "visible") {
+    console.log(`PRODUCER: Detected ${videoElements.length} participant video stream(s).`);
+    lastVideoPresenceState = "visible";
   }
 
   const batchArray = [];
@@ -96,6 +147,13 @@ function produceFrameBatch() {
 
   // If we got frames, add the whole batch to the queue
   if (batchArray.length > 0) {
+    if (frameQueue.length >= MAX_FRAME_QUEUE_SIZE) {
+      frameQueue.shift();
+      console.warn(
+        `PRODUCER: Queue limit reached. Dropped oldest batch. Queue limit: ${MAX_FRAME_QUEUE_SIZE}`
+      );
+    }
+
     frameQueue.push(batchArray);
     console.log(`PRODUCER: Added batch of ${batchArray.length} frames. Queue size: ${frameQueue.length}`);
   }
@@ -214,6 +272,8 @@ async function runConsumerLoop() {
 
 console.log("CyberSentinel Content Script Loaded!");
 
+checkBackendConnection();
+setInterval(checkBackendConnection, CONNECTION_CHECK_INTERVAL_MS);
 setInterval(produceFrameBatch, PRODUCER_INTERVAL_MS);
 
 runConsumerLoop();

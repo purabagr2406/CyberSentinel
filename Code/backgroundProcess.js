@@ -77,8 +77,24 @@ function buildTemporaryDetectionResponse(frames, timestamp) {
   };
 }
 
-// Main POST endpoint for deepfake detection
-app.post('/api/', async (req, res) => {
+function getServerMode() {
+  return USE_TEMP_MODEL_RESPONSE ? "temporary-frontend-development" : "model-backed";
+}
+
+app.get("/health", (req, res) => {
+  const mode = getServerMode();
+  console.log(`Server: Health check received. Connection OK. Mode: ${mode}.`);
+  res.json({
+    ok: true,
+    service: "CyberSentinel backend",
+    mode,
+    temporaryModelResponse: USE_TEMP_MODEL_RESPONSE,
+    temporaryResult: process.env.TEMP_DEEPFAKE_RESULT || "no",
+  });
+});
+
+// REST endpoint handler for deepfake detection.
+async function handleAnalyzeFrames(req, res) {
   const frames = req.body.frames;
   const timestamp = req.body.timestamp;
   const respondOnce = makeSafeResponder(res);
@@ -211,10 +227,22 @@ app.post('/api/', async (req, res) => {
     console.error("Server Error:", err);
     respondOnce(500, { error: err.message });
   }
-});
+}
+
+// Main REST POST endpoint for deepfake detection.
+app.post("/api/analyze", handleAnalyzeFrames);
+
+// Backward-compatible route for older content scripts.
+app.post("/api/", handleAnalyzeFrames);
 app.get("/", (req, res) => res.send("✅ Deepfake backend is running"));
 app.listen(PORT, () => {
-  console.log(`🚀 Deepfake backend running on http://localhost:${PORT}`);
+  console.log(`Server: CyberSentinel backend running on http://localhost:${PORT}`);
+  console.log(`Server: Connection health endpoint ready at http://localhost:${PORT}/health`);
+  if (USE_TEMP_MODEL_RESPONSE) {
+    console.log(
+      `Server: Temporary frontend-development mode enabled. API will return TEMP_DEEPFAKE_RESULT=${process.env.TEMP_DEEPFAKE_RESULT || "no"}.`
+    );
+  }
 });
 
 

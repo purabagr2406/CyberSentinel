@@ -1,36 +1,46 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import {
 	clearLatestAnalysis,
-	DEFAULT_ANALYSIS_STATE,
 	getLatestAnalysis,
 	subscribeToAnalysis,
 } from "../../features/frameApi";
+import {
+	analysisCleared,
+	analysisReceived,
+	selectAnalysisResults,
+	selectLatestAnalysis,
+} from "../../features/frameAnalysisSlice";
 
 const Home = () => {
-	const [analysis, setAnalysis] = useState(DEFAULT_ANALYSIS_STATE);
+	const dispatch = useDispatch();
+	const analysis = useSelector(selectLatestAnalysis);
+	const results = useSelector(selectAnalysisResults);
 
 	useEffect(() => {
 		let mounted = true;
 
 		getLatestAnalysis().then((latestAnalysis) => {
 			if (mounted) {
-				setAnalysis(latestAnalysis);
+				dispatch(analysisReceived(latestAnalysis));
 			}
 		});
 
-		const unsubscribe = subscribeToAnalysis(setAnalysis);
+		const unsubscribe = subscribeToAnalysis((latestAnalysis) => {
+			dispatch(analysisReceived(latestAnalysis));
+		});
 
 		return () => {
 			mounted = false;
 			unsubscribe();
 		};
-	}, []);
+	}, [dispatch]);
 
-	const results = useMemo(
-		() => (Array.isArray(analysis.results) ? analysis.results : []),
-		[analysis.results],
-	);
 	const statusView = useMemo(() => getStatusView(analysis, results), [analysis, results]);
+	const handleClear = () => {
+		dispatch(analysisCleared());
+		clearLatestAnalysis();
+	};
 
 	return (
 		<div className="popup-shell">
@@ -65,7 +75,7 @@ const Home = () => {
 			<section className="results-panel">
 				<div className="section-title">
 					<h2>Latest analysis</h2>
-					<button type="button" onClick={clearLatestAnalysis}>Clear</button>
+					<button type="button" onClick={handleClear}>Clear</button>
 				</div>
 
 				{results.length > 0 ? (
@@ -134,6 +144,14 @@ function getStatusView(analysis, results) {
 			tone: "neutral",
 			label: "Analyzing frames",
 			message: analysis.message || "The latest participant frames are being checked.",
+		};
+	}
+
+	if (analysis.status === "no-video") {
+		return {
+			tone: "neutral",
+			label: "No video visible",
+			message: analysis.message || "No participant video is currently visible.",
 		};
 	}
 
