@@ -10,7 +10,7 @@ import App from './App.jsx'
 createRoot(document.getElementById('root')).render(
 	<StrictMode>
 		<Provider store={store}>
-			<MemoryRouter>
+			<MemoryRouter initialEntries={["/home"]}>
 				<App />
 			</MemoryRouter>
 		</Provider>

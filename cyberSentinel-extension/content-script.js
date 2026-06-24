@@ -1,18 +1,29 @@
 // --- Configuration ---
 const BACKEND_URL = "http://127.0.0.1:5000/api/analyze";
 const BACKEND_HEALTH_URL = "http://127.0.0.1:5000/health";
-// How often to CAPTURE a new batch of frames
-const PRODUCER_INTERVAL_MS = 1000; // Capture a new batch every 1 second
 const CONNECTION_CHECK_INTERVAL_MS = 10000;
-const MAX_PARTICIPANTS_TO_CAPTURE = 3;
-const MAX_FRAME_QUEUE_SIZE = 5;
-const STORAGE_KEY = "cyberSentinelLatestAnalysis";
+
+// Storage Keys matching your React app
+const ANALYSIS_STORAGE_KEY = "cyberSentinelLatestAnalysis";
+const SETTINGS_STORAGE_KEY = "cyberSentinelSettings";
+const MODE_CONTROL_KEY = "cyberSentinelControl"; // Added for Play/Pause
+
+// Dynamic Settings (loaded from Chrome storage)
+let activeSettings = {
+  participantLimit: 6,
+  framesPerBatch: 3,
+  captureIntervalMs: 1000,
+  maxQueueSize: 5,
+  startupMode: "auto", // Added startup preference
+};
 
 // --- State ---
 const frameQueue = []; // Our "data structure" (the queue)
 let lastCapturedIndex = 0; // Remembers where we left off
 let lastConnectionState = "unknown";
 let lastVideoPresenceState = "unknown";
+let producerIntervalId = null; // Used to manage the dynamic capture interval
+let isRunning = false; // The master switch for Auto/Manual play state
 
 // A reusable canvas for capturing snapshots
 const captureCanvas = document.createElement("canvas");
@@ -22,11 +33,82 @@ console.log("CyberSentinel: Content script initialized.");
 console.log(
   "CyberSentinel: Frontend development setup active. Expecting temporary backend responses from http://127.0.0.1:5000."
 );
-// --- Helper Functions ---
+
+// --- Settings & Control Management ---
 
 function canUseExtensionStorage() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
 }
+
+function applyNewSettings(newSettings) {
+  if (!newSettings) return;
+
+  const previousInterval = activeSettings.captureIntervalMs;
+  
+  // Merge incoming settings
+  activeSettings = { ...activeSettings, ...newSettings };
+  console.log("CyberSentinel: Settings updated to", activeSettings);
+
+  // If the user changed the capture interval time, restart the loop timer (it will only run if isRunning === true)
+  if (previousInterval !== activeSettings.captureIntervalMs) {
+    console.log(`PRODUCER: Adjusting capture interval to ${activeSettings.captureIntervalMs}ms`);
+    startProducerLoop(); 
+  }
+}
+
+function applyControlState(controlState) {
+  if (!controlState || typeof controlState.isRunning !== "boolean") return;
+  
+  if (controlState.isRunning !== isRunning) {
+    isRunning = controlState.isRunning;
+    console.log(`CyberSentinel: Detection state changed. isRunning = ${isRunning}`);
+    
+    if (isRunning) {
+      startProducerLoop();
+    } else {
+      // Pause detection: clear interval and wipe the queue
+      if (producerIntervalId) {
+        clearInterval(producerIntervalId);
+      }
+      frameQueue.length = 0; 
+      publishAnalysisStatus({
+        status: "neutral",
+        message: "Detection is manually paused.",
+        queueSize: 0,
+        framesSent: 0,
+      });
+    }
+  }
+}
+
+async function initializeSettings() {
+  if (!canUseExtensionStorage()) return;
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get(SETTINGS_STORAGE_KEY, (data) => {
+      if (data[SETTINGS_STORAGE_KEY]) {
+        applyNewSettings(data[SETTINGS_STORAGE_KEY]);
+      }
+      resolve();
+    });
+  });
+}
+
+// Listen for settings changes and play/pause toggles
+if (canUseExtensionStorage()) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "local") {
+      if (changes[SETTINGS_STORAGE_KEY]) {
+        applyNewSettings(changes[SETTINGS_STORAGE_KEY].newValue);
+      }
+      if (changes[MODE_CONTROL_KEY]) {
+        applyControlState(changes[MODE_CONTROL_KEY].newValue);
+      }
+    }
+  });
+}
+
+// --- Helper Functions ---
 
 function publishAnalysisStatus(statusUpdate) {
   if (!canUseExtensionStorage()) {
@@ -34,7 +116,7 @@ function publishAnalysisStatus(statusUpdate) {
   }
 
   chrome.storage.local.set({
-    [STORAGE_KEY]: {
+    [ANALYSIS_STORAGE_KEY]: {
       ...statusUpdate,
       sourceUrl: window.location.href,
       updatedAt: new Date().toISOString(),
@@ -70,10 +152,6 @@ async function checkBackendConnection() {
   }
 }
 
-/**
- * Captures a single frame from a video element.
- * Returns the DataURL string or null if the video is blank.
- */
 function captureFrameFromVideo(videoElement) {
   if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
     return null;
@@ -89,6 +167,7 @@ function captureFrameFromVideo(videoElement) {
   }
 }
 
+// --- Producer & Consumer ---
 
 function produceFrameBatch() {
   const parentElements = document.querySelectorAll("[data-tid='calling-stream']");
@@ -111,7 +190,7 @@ function produceFrameBatch() {
       });
       lastVideoPresenceState = "none";
     }
-    return; // No videos, do nothing
+    return;
   }
 
   if (lastVideoPresenceState !== "visible") {
@@ -135,27 +214,36 @@ function produceFrameBatch() {
       participantsCaptured++;
     }
 
-    if (participantsCaptured >= MAX_PARTICIPANTS_TO_CAPTURE) {
+    if (participantsCaptured >= activeSettings.participantLimit) {
       lastCapturedIndex = (videoIndex + 1) % videoElements.length;
       break;
     }
   }
 
-  if (participantsCaptured < MAX_PARTICIPANTS_TO_CAPTURE) {
+  if (participantsCaptured < activeSettings.participantLimit) {
     lastCapturedIndex = 0;
   }
 
-  // If we got frames, add the whole batch to the queue
   if (batchArray.length > 0) {
-    if (frameQueue.length >= MAX_FRAME_QUEUE_SIZE) {
+    if (frameQueue.length >= activeSettings.maxQueueSize) {
       frameQueue.shift();
       console.warn(
-        `PRODUCER: Queue limit reached. Dropped oldest batch. Queue limit: ${MAX_FRAME_QUEUE_SIZE}`
+        `PRODUCER: Queue limit reached. Dropped oldest batch. Queue limit: ${activeSettings.maxQueueSize}`
       );
     }
 
     frameQueue.push(batchArray);
     console.log(`PRODUCER: Added batch of ${batchArray.length} frames. Queue size: ${frameQueue.length}`);
+  }
+}
+
+function startProducerLoop() {
+  if (producerIntervalId) {
+    clearInterval(producerIntervalId);
+  }
+  // Only start the capture interval if the play state is active
+  if (isRunning) {
+    producerIntervalId = setInterval(produceFrameBatch, activeSettings.captureIntervalMs);
   }
 }
 
@@ -182,16 +270,14 @@ function formatAnalysisResponse(responseData) {
     })
     .join(" | ");
 }
-// -----------------------------------------------------------------
+
 async function runConsumerLoop() {
   console.log("CONSUMER: Loop started. Waiting for frames...");
 
   while (true) {
-    // Check if there's anything in the queue
-    if (frameQueue.length > 0) {
-      
-      // 1. Get the OLDEST batch from the queue
-      const batchToSend = frameQueue.shift(); // .shift() pulls from the front
+    // Only process the queue if detection is actively running
+    if (isRunning && frameQueue.length > 0) {
+      const batchToSend = frameQueue.shift(); 
       
       console.log(`CONSUMER: Sending batch of ${batchToSend.length}. Queue size: ${frameQueue.length}`);
       publishAnalysisStatus({
@@ -201,7 +287,6 @@ async function runConsumerLoop() {
         framesSent: batchToSend.length,
       });
 
-      // 2. Send it and WAIT for the response
       try {
         const response = await fetch(BACKEND_URL, {
           method: "POST",
@@ -241,9 +326,6 @@ async function runConsumerLoop() {
         }
 
         console.log("CONSUMER: Received analysis:", analysisResult);
-        if (responseData.details) {
-          console.log("CONSUMER: Raw backend details:", responseData.details);
-        }
 
         publishAnalysisStatus({
           status: "ready",
@@ -255,7 +337,7 @@ async function runConsumerLoop() {
         });
 
       } catch (error) {
-        console.error("CONSUMER Error123:", error);
+        console.error("CONSUMER Error:", error);
         publishAnalysisStatus({
           status: "error",
           message: error.message || "Could not contact backend.",
@@ -270,10 +352,33 @@ async function runConsumerLoop() {
   }
 }
 
-console.log("CyberSentinel Content Script Loaded!");
+// --- Initialization ---
+async function startApp() {
+  console.log("CyberSentinel Content Script Loading Settings...");
+  await initializeSettings();
+  
+  // Determine if we should start running immediately
+  if (canUseExtensionStorage()) {
+    chrome.storage.local.get(MODE_CONTROL_KEY, (data) => {
+      let startNow = activeSettings.startupMode === "auto";
 
-checkBackendConnection();
-setInterval(checkBackendConnection, CONNECTION_CHECK_INTERVAL_MS);
-setInterval(produceFrameBatch, PRODUCER_INTERVAL_MS);
+      // If the user previously toggled the state manually, respect it
+      if (data[MODE_CONTROL_KEY] !== undefined && data[MODE_CONTROL_KEY].isRunning !== undefined) {
+        startNow = data[MODE_CONTROL_KEY].isRunning;
+      }
 
-runConsumerLoop();
+      applyControlState({ isRunning: startNow });
+      
+      // Sync the decided state back so the React popup displays correctly
+      chrome.storage.local.set({ [MODE_CONTROL_KEY]: { isRunning: startNow } });
+    });
+  }
+  
+  checkBackendConnection();
+  setInterval(checkBackendConnection, CONNECTION_CHECK_INTERVAL_MS);
+  
+  // The producer loop will be started by applyControlState if isRunning is true
+  runConsumerLoop();
+}
+
+startApp();

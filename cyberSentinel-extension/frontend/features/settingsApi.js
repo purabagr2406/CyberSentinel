@@ -5,6 +5,7 @@ export const DEFAULT_SETTINGS = {
 	framesPerBatch: 3,
 	captureIntervalMs: 1000,
 	maxQueueSize: 5,
+	startUpMode: "auto",
 };
 
 function hasChromeStorage() {
@@ -22,6 +23,9 @@ export function normalizeSettings(settings) {
 		framesPerBatch: clampInteger(nextSettings.framesPerBatch, 1, 6),
 		captureIntervalMs: clampInteger(nextSettings.captureIntervalMs, 500, 10000),
 		maxQueueSize: clampInteger(nextSettings.maxQueueSize, 1, 20),
+		startUpMode: ["auto", "manual"].includes(nextSettings.startupMode) 
+      ? nextSettings.startupMode 
+      : "auto",
 	};
 }
 
@@ -70,6 +74,8 @@ export function subscribeToSettings(onChange) {
 	globalThis.chrome.storage.onChanged.addListener(listener);
 
 	return () => {
+		// return value for unsubscribe
+		// to save memory
 		globalThis.chrome.storage.onChanged.removeListener(listener);
 	};
 }
