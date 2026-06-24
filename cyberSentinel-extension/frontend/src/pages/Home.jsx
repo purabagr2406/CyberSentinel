@@ -11,6 +11,11 @@ import {
 	selectAnalysisResults,
 	selectLatestAnalysis,
 } from "../../features/frameAnalysisSlice";
+import {
+	getSettings,
+	saveSettings,
+	subscribeToSettings,
+}	from "../../features/settingsApi";
 
 const Home = () => {
 	const dispatch = useDispatch();
@@ -43,63 +48,71 @@ const Home = () => {
 	};
 
 	return (
-		<div className="popup-shell">
-			<header className="popup-header">
+		<div className="min-h-[460px] w-[360px] bg-slate-50 p-4.5 text-slate-900">
+			<header className="mb-4 flex items-start justify-between gap-4">
 				<div>
-					<p className="eyebrow">CyberSentinel</p>
-					<h1>Live deepfake monitor</h1>
+					<p className="mb-1 text-xs font-bold uppercase text-slate-500">CyberSentinel</p>
+					<h1 className="text-[22px] leading-tight font-bold tracking-normal">Live deepfake monitor</h1>
 				</div>
-				<span className={`status-dot ${statusView.tone}`} aria-label={statusView.label} />
+				<span className={getStatusDotClass(statusView.tone)} aria-label={statusView.label} />
 			</header>
 
-			<section className={`alert-panel ${statusView.tone}`}>
-				<p className="alert-label">{statusView.label}</p>
-				<p className="alert-message">{statusView.message}</p>
+			<section className={getAlertPanelClass(statusView.tone)}>
+				<p className="mb-1 text-[13px] font-extrabold">{statusView.label}</p>
+				<p className="text-[13px] leading-snug text-slate-600">{statusView.message}</p>
 			</section>
 
-			<section className="metrics-grid" aria-label="Scan details">
-				<div>
-					<span>Frames sent</span>
-					<strong>{analysis.framesSent || 0}</strong>
+			<section className="my-3.5 grid grid-cols-3 gap-2" aria-label="Scan details">
+				<div className="min-w-0 rounded-lg border border-slate-200 bg-white p-2.5">
+					<span className="block text-[11px] font-bold uppercase text-slate-500">Frames sent</span>
+					<strong className="mt-1 block text-xl leading-none">{analysis.framesSent || 0}</strong>
 				</div>
-				<div>
-					<span>Queue</span>
-					<strong>{analysis.queueSize || 0}</strong>
+				<div className="min-w-0 rounded-lg border border-slate-200 bg-white p-2.5">
+					<span className="block text-[11px] font-bold uppercase text-slate-500">Queue</span>
+					<strong className="mt-1 block text-xl leading-none">{analysis.queueSize || 0}</strong>
 				</div>
-				<div>
-					<span>Participants</span>
-					<strong>{results.length}</strong>
+				<div className="min-w-0 rounded-lg border border-slate-200 bg-white p-2.5">
+					<span className="block text-[11px] font-bold uppercase text-slate-500">Participants</span>
+					<strong className="mt-1 block text-xl leading-none">{results.length}</strong>
 				</div>
 			</section>
 
-			<section className="results-panel">
-				<div className="section-title">
-					<h2>Latest analysis</h2>
-					<button type="button" onClick={handleClear}>Clear</button>
+			<section className="rounded-lg border border-slate-200 bg-white p-3.5">
+				<div className="mb-3 flex items-center justify-between gap-3">
+					<h2 className="text-sm leading-tight font-bold">Latest analysis</h2>
+					<button
+						type="button"
+						className="h-7.5 min-w-14 cursor-pointer rounded-md border border-slate-300 bg-slate-50 px-3 text-sm text-slate-800 hover:bg-slate-100"
+						onClick={handleClear}
+					>
+						Clear
+					</button>
 				</div>
 
 				{results.length > 0 ? (
-					<ul className="result-list">
+					<ul className="grid max-h-44 list-none gap-2 overflow-auto p-0">
 						{results.map((item) => (
-							<li key={item.participantId} className={getResultTone(item.label)}>
-								<div>
-									<strong>{item.participantId || "Participant"}</strong>
-									<span>{item.label || "Unknown"}</span>
+							<li key={item.participantId} className={getResultItemClass(item.label)}>
+								<div className="flex items-center justify-between gap-2.5">
+									<strong className="min-w-0 text-[13px]">{item.participantId || "Participant"}</strong>
+									<span className="min-w-0 text-[13px]">{item.label || "Unknown"}</span>
 								</div>
 								{typeof item.real_prob === "number" && (
-									<p>Real probability: {(item.real_prob * 100).toFixed(1)}%</p>
+									<p className="mt-1.5 text-xs leading-snug text-slate-500">
+										Real probability: {(item.real_prob * 100).toFixed(1)}%
+									</p>
 								)}
-								{item.error && <p>{item.error}</p>}
+								{item.error && <p className="mt-1.5 text-xs leading-snug text-slate-500">{item.error}</p>}
 							</li>
 						))}
 					</ul>
 				) : (
-					<p className="empty-state">{analysis.summary || analysis.message}</p>
+					<p className="mt-1.5 text-xs leading-snug text-slate-500">{analysis.summary || analysis.message}</p>
 				)}
 			</section>
 
-			<footer>
-				<span>Last update</span>
+			<footer className="mt-3.5 flex items-center justify-between gap-3.5 text-xs text-slate-600">
+				<span className="block text-[11px] font-bold uppercase text-slate-500">Last update</span>
 				<strong>{formatTimestamp(analysis.updatedAt)}</strong>
 			</footer>
 		</div>
@@ -172,6 +185,41 @@ function getResultTone(label) {
 	}
 
 	return "safe";
+}
+
+function getStatusDotClass(tone) {
+	const baseClass = "mt-1.5 h-3.5 w-3.5 shrink-0 rounded-full";
+	const toneClasses = {
+		safe: "bg-emerald-700 shadow-[0_0_0_5px_rgba(22,128,90,0.14)]",
+		warning: "bg-amber-700 shadow-[0_0_0_5px_rgba(183,121,31,0.16)]",
+		danger: "bg-red-700 shadow-[0_0_0_5px_rgba(197,48,48,0.15)]",
+		neutral: "bg-slate-400 shadow-[0_0_0_5px_rgba(133,147,163,0.14)]",
+	};
+
+	return `${baseClass} ${toneClasses[tone] || toneClasses.neutral}`;
+}
+
+function getAlertPanelClass(tone) {
+	const baseClass = "rounded-lg border p-3.5";
+	const toneClasses = {
+		safe: "border-emerald-300 bg-emerald-50",
+		warning: "border-amber-300 bg-amber-50",
+		danger: "border-red-300 bg-red-50",
+		neutral: "border-slate-200 bg-white",
+	};
+
+	return `${baseClass} ${toneClasses[tone] || toneClasses.neutral}`;
+}
+
+function getResultItemClass(label) {
+	const baseClass = "rounded-md border-l-4 bg-slate-50 p-2.5";
+	const toneClasses = {
+		safe: "border-l-emerald-700",
+		warning: "border-l-amber-700",
+		danger: "border-l-red-700",
+	};
+
+	return `${baseClass} ${toneClasses[getResultTone(label)] || toneClasses.safe}`;
 }
 
 function formatTimestamp(value) {
