@@ -86,9 +86,16 @@ def analyze_image_bgr(image_bgr):
     if image_bgr is None or image_bgr.size == 0:
         raise ValueError("Invalid image")
 
-    real_prob = predict_real_probability(image_bgr)
+    # 1. Detect the face FIRST
     face_crop, _ = detect_largest_face_with_bbox(image_bgr)
     used_face_crop = face_crop is not None
+
+    # 2. Use the face crop for prediction if we found one. 
+    # If no face is found, fallback to analyzing the whole frame.
+    image_to_analyze = face_crop if used_face_crop else image_bgr
+    
+    # 3. Predict on the correct image
+    real_prob = predict_real_probability(image_to_analyze)
 
     fake_prob = 1.0 - real_prob
     label = classify_real_probability(real_prob)
