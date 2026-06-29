@@ -312,7 +312,8 @@ async function runConsumerLoop() {
           });
           continue;
         }
-
+				console.log("CONSUMER: Backend response received:", responseData);
+				
         const analysisResult = formatAnalysisResponse(responseData);
         if (!analysisResult) {
           console.warn("CONSUMER: Response had no usable analysis payload.", responseData);
